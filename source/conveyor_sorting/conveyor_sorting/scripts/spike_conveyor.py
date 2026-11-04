@@ -73,20 +73,17 @@ args_cli = parser.parse_args()
 
 # 2. Imports of framework classes
 import torch
-from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 
-from conveyor_sorting.scene.conveyor import ConveyorCfg, enable_conveyor_extension, setup_conveyor_belt, spawn_side_rails
-
 
 def build_spike_scene(
     stage,
     origins: list[list[float]],
-    conveyor_cfg: ConveyorCfg,
-) -> tuple[dict[str, RigidObject], ConveyorCfg]:
+    conveyor_cfg,
+) -> tuple[dict[str, RigidObject], any]:
     """Constructs minimal spike scene containing ground, conveyor belt, side rails, and test cube.
 
     Args:
@@ -97,6 +94,8 @@ def build_spike_scene(
     Returns:
         Tuple of (scene_entities dictionary, conveyor_cfg).
     """
+    from pxr import Gf, UsdGeom
+    from conveyor_sorting.scene.conveyor import enable_conveyor_extension, setup_conveyor_belt, spawn_side_rails
     # Ground plane and lighting
     ground_cfg = sim_utils.GroundPlaneCfg()
     ground_cfg.func("/World/defaultGroundPlane", ground_cfg)
@@ -161,6 +160,8 @@ def main():
     print("=" * 70)
     print("=== STARTING MILESTONE 1 (M1): CONVEYOR SPIKE & AT-2 VALIDATION ===")
     print("=" * 70)
+
+    from conveyor_sorting.scene.conveyor import ConveyorCfg
 
     num_envs = args_cli.num_envs
     target_speed = args_cli.speed
