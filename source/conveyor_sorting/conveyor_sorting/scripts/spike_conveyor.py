@@ -12,8 +12,12 @@ Validates conveyor surface velocity integration and evaluates acceptance criteri
 Kriteria lulus: Selisih dengan conveyor.speed_mps <= 10%."
 
 Usage (on target machine with Isaac Sim / Isaac Lab installed):
-    uv run python source/conveyor_sorting/conveyor_sorting/scripts/spike_conveyor.py --headless --num_envs 1
-    uv run python source/conveyor_sorting/conveyor_sorting/scripts/spike_conveyor.py --headless --num_envs 4
+    Windows:
+        .\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --headless --num_envs 1 --speed 0.2
+        .\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --headless --num_envs 4 --speed 0.2
+    Linux:
+        uv run python source/conveyor_sorting/conveyor_sorting/scripts/spike_conveyor.py --headless --num_envs 1 --speed 0.2
+        uv run python source/conveyor_sorting/conveyor_sorting/scripts/spike_conveyor.py --headless --num_envs 4 --speed 0.2
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ if _PKG_ROOT not in sys.path:
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
-# 1. Parse arguments first before launching simulation app
+# 1. Parse arguments first
 parser = argparse.ArgumentParser(
     description="Milestone 1 (M1) Spike: Validate conveyor belt velocity and evaluate AT-2."
 )
@@ -47,12 +51,9 @@ parser.add_argument(
 add_launcher_args(parser)
 args_cli = parser.parse_args()
 
-# 2. Launch simulation app
-simulation_app = launch_simulation(args_cli)
-
-# 3. Import dependencies that require running SimulationApp
+# 2. Imports of framework classes
 import torch
-from pxr import Gf, UsdGeom, UsdPhysics
+from pxr import Gf, UsdGeom
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
@@ -154,81 +155,84 @@ def main():
         use_omnigraph_utility=use_utility,
     )
 
-    # Initialize simulation context
-    sim_cfg = SimulationCfg(dt=1.0 / 60.0)
-    sim = SimulationContext(sim_cfg)
-    sim.set_camera_view(eye=[0.0, -2.5, 2.2], target=[0.0, 0.0, 0.6])
+    # Simulation configuration
+    sim_cfg = SimulationCfg(dt=1.0 / 60.0, device=args_cli.device)
 
-    # Environment origins
-    origins = [[0.0, i * 2.0, 0.0] for i in range(num_envs)]
+    all_passed = False
 
-    stage = sim.stage
-    entities, _ = build_spike_scene(stage, origins, conveyor_cfg)
-    cube: RigidObject = entities["test_cube"]
+    # Launch simulation runtime via context manager (starts Kit and initializes Omniverse)
+    with launch_simulation(sim_cfg, args_cli):
+        sim = SimulationContext(sim_cfg)
+        sim.set_camera_view(eye=[0.0, -2.5, 2.2], target=[0.0, 0.0, 0.6])
 
-    sim.reset()
-    cube.reset()
+        # Environment origins
+        origins = [[0.0, i * 2.0, 0.0] for i in range(num_envs)]
 
-    print(f"\n[M1] Environment count: {num_envs}")
-    print(f"[M1] Target conveyor speed: {target_speed:.4f} m/s")
-    print(f"[M1] Implementation mode: {args_cli.mode}")
-    print("[M1] Stepping simulation and recording linear velocity...")
+        stage = sim.stage
+        entities, _ = build_spike_scene(stage, origins, conveyor_cfg)
+        cube: RigidObject = entities["test_cube"]
 
-    # Data collection buffers
-    recorded_vx_steady: list[torch.Tensor] = []
-    settle_steps = 60  # Initial 1 second transient window
+        sim.reset()
+        cube.reset()
 
-    for step in range(args_cli.num_steps):
-        # Step physics
-        sim.step()
-        cube.update(sim.get_physics_dt())
+        print(f"\n[M1] Environment count: {num_envs}")
+        print(f"[M1] Target conveyor speed: {target_speed:.4f} m/s")
+        print(f"[M1] Implementation mode: {args_cli.mode}")
+        print("[M1] Stepping simulation and recording linear velocity...")
 
-        # Measure linear velocity along X
-        # root_lin_vel_w has shape (num_envs, 3)
-        lin_vel_w = cube.data.root_lin_vel_w.torch
-        vx = lin_vel_w[:, 0]
+        # Data collection buffers
+        recorded_vx_steady: list[torch.Tensor] = []
+        settle_steps = 60  # Initial 1 second transient window
 
-        if step >= settle_steps:
-            recorded_vx_steady.append(vx.clone())
+        for step in range(args_cli.num_steps):
+            # Step physics
+            sim.step()
+            cube.update(sim.get_physics_dt())
 
-        if (step + 1) % 100 == 0:
-            avg_step_vx = vx.mean().item()
-            print(f"  Step {step + 1:3d}/{args_cli.num_steps}: instantaneous avg vx = {avg_step_vx:.4f} m/s")
+            # Measure linear velocity along X
+            # root_lin_vel_w has shape (num_envs, 3)
+            lin_vel_w = cube.data.root_lin_vel_w.torch
+            vx = lin_vel_w[:, 0]
 
-    # Aggregate results
-    stacked_vx = torch.stack(recorded_vx_steady, dim=0)  # shape: (steps_steady, num_envs)
-    mean_vx_per_env = stacked_vx.mean(dim=0).cpu().tolist()
+            if step >= settle_steps:
+                recorded_vx_steady.append(vx.clone())
 
-    print("\n" + "=" * 70)
-    print("=== RESULTS SUMMARY FOR AT-2 ACCEPTANCE CRITERION ===")
-    print("=" * 70)
+            if (step + 1) % 100 == 0:
+                avg_step_vx = vx.mean().item()
+                print(f"  Step {step + 1:3d}/{args_cli.num_steps}: instantaneous avg vx = {avg_step_vx:.4f} m/s")
 
-    all_passed = True
-    for env_idx, measured_vx in enumerate(mean_vx_per_env):
-        speed_error = abs(measured_vx - target_speed)
-        error_pct = (speed_error / target_speed) * 100.0 if target_speed > 0 else 0.0
-        passed = error_pct <= 10.0
-        if not passed:
-            all_passed = False
+        # Aggregate results
+        stacked_vx = torch.stack(recorded_vx_steady, dim=0)  # shape: (steps_steady, num_envs)
+        mean_vx_per_env = stacked_vx.mean(dim=0).cpu().tolist()
 
-        status_str = "PASS" if passed else "FAIL"
-        print(
-            f"Env {env_idx}: Target = {target_speed:.4f} m/s | "
-            f"Measured = {measured_vx:.4f} m/s | "
-            f"Error = {error_pct:5.2f}% (Threshold <= 10.0%) -> [{status_str}]"
-        )
+        print("\n" + "=" * 70)
+        print("=== RESULTS SUMMARY FOR AT-2 ACCEPTANCE CRITERION ===")
+        print("=" * 70)
 
-    print("-" * 70)
-    if all_passed:
-        print("[M1 SPIKE STATUS]: PASSED - AT-2 criterion satisfied!")
-    else:
-        print("[M1 SPIKE STATUS]: FAILED - One or more envs exceeded 10% velocity tolerance.")
-        if args_cli.mode == "omnigraph":
-            print("[RECOMMENDATION]: Retry with direct surface velocity fallback: '--mode surface_api'")
-    print("=" * 70)
+        all_passed = True
+        for env_idx, measured_vx in enumerate(mean_vx_per_env):
+            speed_error = abs(measured_vx - target_speed)
+            error_pct = (speed_error / target_speed) * 100.0 if target_speed > 0 else 0.0
+            passed = error_pct <= 10.0
+            if not passed:
+                all_passed = False
 
-    # Cleanup and exit
-    simulation_app.close()
+            status_str = "PASS" if passed else "FAIL"
+            print(
+                f"Env {env_idx}: Target = {target_speed:.4f} m/s | "
+                f"Measured = {measured_vx:.4f} m/s | "
+                f"Error = {error_pct:5.2f}% (Threshold <= 10.0%) -> [{status_str}]"
+            )
+
+        print("-" * 70)
+        if all_passed:
+            print("[M1 SPIKE STATUS]: PASSED - AT-2 criterion satisfied!")
+        else:
+            print("[M1 SPIKE STATUS]: FAILED - One or more envs exceeded 10% velocity tolerance.")
+            if args_cli.mode == "omnigraph":
+                print("[RECOMMENDATION]: Retry with direct surface velocity fallback: '--mode surface_api'")
+        print("=" * 70)
+
     sys.exit(0 if all_passed else 1)
 
 
