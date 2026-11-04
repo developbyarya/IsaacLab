@@ -32,6 +32,26 @@ _PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
+# Windows DLL resolution fix for Conda environments (prevents 0xc0000139 / entrypoint not found collisions)
+if sys.platform == "win32":
+    import glob
+
+    site_packages = os.path.join(sys.prefix, "Lib", "site-packages")
+    for dll_dir in glob.glob(os.path.join(site_packages, "isaacsim", "extscache", "*", "bin")):
+        try:
+            os.add_dll_directory(dll_dir)
+        except OSError:
+            pass
+    for base_dir in [
+        os.path.join(site_packages, "isaacsim", "kit"),
+        os.path.join(site_packages, "isaacsim"),
+    ]:
+        if os.path.isdir(base_dir):
+            try:
+                os.add_dll_directory(base_dir)
+            except OSError:
+                pass
+
 from isaaclab.app import add_launcher_args, launch_simulation
 
 # 1. Parse arguments first
