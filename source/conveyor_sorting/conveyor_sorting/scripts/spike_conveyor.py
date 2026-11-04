@@ -19,7 +19,14 @@ Usage (on target machine with Isaac Sim / Isaac Lab installed):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+
+# Ensure conveyor_sorting package root is in sys.path
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
+if _PKG_ROOT not in sys.path:
+    sys.path.insert(0, _PKG_ROOT)
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
@@ -44,15 +51,8 @@ args_cli = parser.parse_args()
 simulation_app = launch_simulation(args_cli)
 
 # 3. Import dependencies that require running SimulationApp
-import os
 import torch
 from pxr import Gf, UsdGeom, UsdPhysics
-
-# Ensure conveyor_sorting package root is in sys.path
-_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
-if _PKG_ROOT not in sys.path:
-    sys.path.insert(0, _PKG_ROOT)
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObject, RigidObjectCfg
