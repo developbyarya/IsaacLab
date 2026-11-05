@@ -32,8 +32,11 @@ _PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-# Windows PATH sanitization to prevent [WinError 206] during pxr.Tf.WindowsImportWrapper
-if sys.platform == "win32":
+def sanitize_windows_environment():
+    """Sanitize PATH and patch pxr.Tf.WindowsImportWrapper on Windows to prevent WinError 206."""
+    if sys.platform != "win32":
+        return
+
     clean_paths = []
     for p in os.environ.get("PATH", "").split(os.pathsep):
         p_clean = p.strip().strip('"')
@@ -64,6 +67,36 @@ if sys.platform == "win32":
                 os.add_dll_directory(base_dir)
             except OSError:
                 pass
+
+    # Monkey patch pxr.Tf.WindowsImportWrapper to prevent WinError 206 crashes
+    try:
+        import contextlib
+        import pxr.Tf as Tf
+
+        @contextlib.contextmanager
+        def safe_windows_import_wrapper():
+            dirs = []
+            for p in os.environ.get("PATH", "").split(os.pathsep):
+                if p and os.path.isdir(p):
+                    try:
+                        dirs.append(os.add_dll_directory(p))
+                    except Exception:
+                        pass
+            try:
+                yield
+            finally:
+                for d in dirs:
+                    try:
+                        d.close()
+                    except Exception:
+                        pass
+
+        Tf.WindowsImportWrapper = safe_windows_import_wrapper
+    except Exception:
+        pass
+
+
+sanitize_windows_environment()
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
@@ -207,6 +240,9 @@ def main():
 
     # Launch simulation runtime via context manager (starts Kit and initializes Omniverse)
     with launch_simulation(sim_cfg, args_cli):
+        # Re-apply Windows environment sanitization and patch pxr.Tf after Kit startup
+        sanitize_windows_environment()
+
         sim = SimulationContext(sim_cfg)
         sim.set_camera_view(eye=[0.0, -2.5, 2.2], target=[0.0, 0.0, 0.6])
 
