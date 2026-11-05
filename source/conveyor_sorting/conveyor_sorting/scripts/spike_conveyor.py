@@ -237,7 +237,7 @@ def main():
                     & (pos[:, 2] <= conveyor_cfg.surface_height_m + 0.20)
                 )
                 vel[on_belt, 0] = target_speed
-                cube.write_root_velocity_to_sim_index(vel)
+                cube.write_root_velocity_to_sim_index(root_velocity=vel)
 
             # Step physics
             sim.step()
