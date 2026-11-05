@@ -199,6 +199,9 @@ def main():
     with launch_simulation(sim_cfg, args_cli):
         clean_windows_path()
 
+        # Ensure a fresh, empty stage is created (clears any residual template or default scene prims)
+        sim_utils.create_new_stage()
+
         sim = SimulationContext(sim_cfg)
         sim.set_camera_view(eye=[0.0, -2.5, 2.2], target=[0.0, 0.0, 0.6])
 
@@ -209,10 +212,19 @@ def main():
         entities, _ = build_spike_scene(stage, origins, conveyor_cfg)
         cube: RigidObject = entities["test_cube"]
 
+        origins_tensor = torch.tensor(origins, device=sim.device, dtype=torch.float32)
+
+        # Reset simulation and explicitly set initial state into PhysX
         sim.reset()
+        initial_root_pose = cube.data.default_root_pose.torch.clone()
+        initial_root_pose[:, :3] += origins_tensor
+        cube.write_root_pose_to_sim_index(root_pose=initial_root_pose)
+        cube.write_root_velocity_to_sim_index(root_velocity=cube.data.default_root_vel.torch)
         cube.reset()
 
         print(f"\n[M1] Environment count: {num_envs}")
+        print(f"[M1] Matched cube instances: {cube.num_instances}")
+        print(f"[M1] Cube initial pos (env 0): {cube.data.root_pos_w.torch[0].tolist()}")
         print(f"[M1] Target conveyor speed: {target_speed:.4f} m/s")
         print(f"[M1] Implementation mode: {args_cli.mode}")
         print("[M1] Stepping simulation and recording linear velocity...")
@@ -226,15 +238,16 @@ def main():
             if args_cli.mode == "custom_drive":
                 vel = cube.data.root_vel_w.torch.clone()
                 pos = cube.data.root_pos_w.torch
+                rel_pos = pos - origins_tensor
                 half_len = conveyor_cfg.length_m / 2.0
                 half_wid = conveyor_cfg.width_m / 2.0
                 on_belt = (
-                    (pos[:, 0] >= -half_len)
-                    & (pos[:, 0] <= half_len)
-                    & (pos[:, 1] >= -half_wid)
-                    & (pos[:, 1] <= half_wid)
-                    & (pos[:, 2] >= conveyor_cfg.surface_height_m - 0.05)
-                    & (pos[:, 2] <= conveyor_cfg.surface_height_m + 0.20)
+                    (rel_pos[:, 0] >= -half_len)
+                    & (rel_pos[:, 0] <= half_len)
+                    & (rel_pos[:, 1] >= -half_wid)
+                    & (rel_pos[:, 1] <= half_wid)
+                    & (rel_pos[:, 2] >= conveyor_cfg.surface_height_m - 0.05)
+                    & (rel_pos[:, 2] <= conveyor_cfg.surface_height_m + 0.20)
                 )
                 vel[on_belt, 0] = target_speed
                 cube.write_root_velocity_to_sim_index(root_velocity=vel)
@@ -244,7 +257,7 @@ def main():
             cube.update(sim.get_physics_dt())
 
             # Measure linear velocity along X
-            # root_lin_vel_w has shape (num_envs, 3)
+            # root_lin_vel_w has shape (num_instances, 3)
             lin_vel_w = cube.data.root_lin_vel_w.torch
             vx = lin_vel_w[:, 0]
             pos_w = cube.data.root_pos_w.torch
