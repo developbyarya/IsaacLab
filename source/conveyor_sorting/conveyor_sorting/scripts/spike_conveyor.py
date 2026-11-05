@@ -32,8 +32,8 @@ _PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-def sanitize_windows_environment():
-    """Sanitize PATH and patch pxr.Tf.WindowsImportWrapper on Windows to prevent WinError 206."""
+def clean_windows_path():
+    """Sanitize PATH on Windows to prevent WinError 206 without altering DLL search order."""
     if sys.platform != "win32":
         return
 
@@ -41,6 +41,8 @@ def sanitize_windows_environment():
     for p in os.environ.get("PATH", "").split(os.pathsep):
         p_clean = p.strip().strip('"')
         if not p_clean or len(p_clean) > 200 or not os.path.isdir(p_clean):
+            continue
+        if "copilot-shim" in p_clean.lower():
             continue
         try:
             h = os.add_dll_directory(p_clean)
@@ -50,53 +52,8 @@ def sanitize_windows_environment():
             pass
     os.environ["PATH"] = os.pathsep.join(clean_paths)
 
-    import glob
 
-    site_packages = os.path.join(sys.prefix, "Lib", "site-packages")
-    for dll_dir in glob.glob(os.path.join(site_packages, "isaacsim", "extscache", "*", "bin")):
-        try:
-            os.add_dll_directory(dll_dir)
-        except OSError:
-            pass
-    for base_dir in [
-        os.path.join(site_packages, "isaacsim", "kit"),
-        os.path.join(site_packages, "isaacsim"),
-    ]:
-        if os.path.isdir(base_dir):
-            try:
-                os.add_dll_directory(base_dir)
-            except OSError:
-                pass
-
-    # Monkey patch pxr.Tf.WindowsImportWrapper to prevent WinError 206 crashes
-    try:
-        import contextlib
-        import pxr.Tf as Tf
-
-        @contextlib.contextmanager
-        def safe_windows_import_wrapper():
-            dirs = []
-            for p in os.environ.get("PATH", "").split(os.pathsep):
-                if p and os.path.isdir(p):
-                    try:
-                        dirs.append(os.add_dll_directory(p))
-                    except Exception:
-                        pass
-            try:
-                yield
-            finally:
-                for d in dirs:
-                    try:
-                        d.close()
-                    except Exception:
-                        pass
-
-        Tf.WindowsImportWrapper = safe_windows_import_wrapper
-    except Exception:
-        pass
-
-
-sanitize_windows_environment()
+clean_windows_path()
 
 from isaaclab.app import add_launcher_args, launch_simulation
 
@@ -240,8 +197,7 @@ def main():
 
     # Launch simulation runtime via context manager (starts Kit and initializes Omniverse)
     with launch_simulation(sim_cfg, args_cli):
-        # Re-apply Windows environment sanitization and patch pxr.Tf after Kit startup
-        sanitize_windows_environment()
+        clean_windows_path()
 
         sim = SimulationContext(sim_cfg)
         sim.set_camera_view(eye=[0.0, -2.5, 2.2], target=[0.0, 0.0, 0.6])
