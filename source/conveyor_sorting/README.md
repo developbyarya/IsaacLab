@@ -16,22 +16,26 @@ Skrip M1 Spike menguji integrasi *conveyor belt* dan memvalidasi kriteria peneri
 
 Buka terminal di root direktori IsaacLab:
 
-**Single-Environment (`num_envs = 1`):**
+**1. Menjalankan Uji AT-2 (Default Mode: `custom_drive` GPU-compatible):**
 ```cmd
 .\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --headless --num_envs 1 --speed 0.2
 ```
 
-**Multi-Environment (`num_envs = 4`):**
+**2. Menampilkan GUI / Viewport 3D Langsung:**
+Di Isaac Lab 3.0, tampilan visual viewport dibuka dengan menambahkan flag `--viz kit`:
+```cmd
+.\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --viz kit --num_envs 1 --speed 0.2
+```
+
+**3. Uji Multi-Environment (`num_envs = 4`):**
 ```cmd
 .\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --headless --num_envs 4 --speed 0.2
 ```
 
-**Fallback Mode (Direct `PhysxSurfaceVelocityAPI`):**
-```cmd
-.\isaaclab.bat -p source\conveyor_sorting\conveyor_sorting\scripts\spike_conveyor.py --headless --num_envs 4 --mode surface_api
-```
-
-*(Catatan: Anda juga dapat menghapus flag `--headless` jika ingin melihat visualisasi 3D viewport di layar monitor).*
+**4. Opsi Mode Alternatif:**
+- `--mode custom_drive` (Default): Menggunakan tensor velocity drive bawaan Isaac Lab (100% kompatibel dengan GPU RTX 5060 Ti dan multi-env).
+- `--mode surface_api`: Menggunakan `PhysxSurfaceVelocityAPI` murni (khusus CPU: tambahkan `--device cpu`).
+- `--mode omnigraph`: Menggunakan Conveyor Belt Utility bawaan Isaac Sim.
 
 ---
 
