@@ -32,8 +32,21 @@ _PKG_ROOT = os.path.abspath(os.path.join(_CURRENT_DIR, "..", ".."))
 if _PKG_ROOT not in sys.path:
     sys.path.insert(0, _PKG_ROOT)
 
-# Windows DLL resolution fix for Conda environments (prevents 0xc0000139 / entrypoint not found collisions)
+# Windows PATH sanitization to prevent [WinError 206] during pxr.Tf.WindowsImportWrapper
 if sys.platform == "win32":
+    clean_paths = []
+    for p in os.environ.get("PATH", "").split(os.pathsep):
+        p_clean = p.strip().strip('"')
+        if not p_clean or len(p_clean) > 200 or not os.path.isdir(p_clean):
+            continue
+        try:
+            h = os.add_dll_directory(p_clean)
+            h.close()
+            clean_paths.append(p_clean)
+        except Exception:
+            pass
+    os.environ["PATH"] = os.pathsep.join(clean_paths)
+
     import glob
 
     site_packages = os.path.join(sys.prefix, "Lib", "site-packages")
@@ -114,12 +127,17 @@ def build_spike_scene(
         sim_utils.create_prim(env_ns, "Xform", translation=origin)
 
         belt_path = f"{env_ns}/ConveyorBelt"
-        cube_geom = UsdGeom.Cube.Define(stage, belt_path)
-        cube_geom.CreateSizeAttr().Set(1.0)
-        cube_geom.AddScaleOp().Set(
-            Gf.Vec3d(conveyor_cfg.length_m, conveyor_cfg.width_m, conveyor_cfg.belt_depth_m)
+        # Spawn conveyor belt rigid body with high-friction physics material
+        belt_cfg = sim_utils.CuboidCfg(
+            size=(conveyor_cfg.length_m, conveyor_cfg.width_m, conveyor_cfg.belt_depth_m),
+            rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(kinematic_enabled=True),
+            collision_props=sim_utils.UsdPhysicsCollisionCfg(),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                static_friction=1.0, dynamic_friction=1.0, restitution=0.0
+            ),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.2, 0.25)),
         )
-        cube_geom.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, belt_center_z))
+        belt_cfg.func(belt_path, belt_cfg, translation=(0.0, 0.0, belt_center_z))
 
         # Setup conveyor surface velocity
         setup_conveyor_belt(stage, belt_path, conveyor_cfg)
@@ -129,7 +147,7 @@ def build_spike_scene(
             spawn_side_rails(stage, env_ns, conveyor_cfg)
 
     # Spawn test cube using RigidObject across all envs
-    # Cube initial position: x = -1.0 m, y = 0.0 m, z = 0.63 m (surface is at 0.60 m)
+    # Cube initial position: x = -1.0 m, y = 0.0 m, resting on surface at z = 0.60 m + (size/2) + 0.001 m
     cube_size = 0.05
     cube_cfg = RigidObjectCfg(
         prim_path="/World/Env_.*/TestCube",
@@ -139,12 +157,12 @@ def build_spike_scene(
             mass_props=sim_utils.MassCfg(mass=0.05),
             collision_props=sim_utils.UsdPhysicsCollisionCfg(),
             physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=0.8, dynamic_friction=0.6, restitution=0.0
+                static_friction=1.0, dynamic_friction=0.9, restitution=0.0
             ),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.7, 0.2)),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(-1.0, 0.0, conveyor_cfg.surface_height_m + (cube_size / 2.0) + 0.005),
+            pos=(-1.0, 0.0, conveyor_cfg.surface_height_m + (cube_size / 2.0) + 0.001),
             rot=(1.0, 0.0, 0.0, 0.0),
             lin_vel=(0.0, 0.0, 0.0),
             ang_vel=(0.0, 0.0, 0.0),

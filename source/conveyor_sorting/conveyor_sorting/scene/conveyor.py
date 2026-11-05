@@ -103,14 +103,26 @@ def setup_conveyor_belt(
 
     if not belt_prim.HasAPI(UsdPhysics.RigidBodyAPI):
         rb_api = UsdPhysics.RigidBodyAPI.Apply(belt_prim)
-        # Conveyor frame/belt should be kinematic so it stays fixed in place
         rb_api.CreateKinematicEnabledAttr().Set(True)
 
-    applied_via_utility = False
+    if not belt_prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI):
+        PhysxSchema.PhysxRigidBodyAPI.Apply(belt_prim)
 
+    if not belt_prim.HasAPI(PhysxSchema.PhysxCollisionAPI):
+        PhysxSchema.PhysxCollisionAPI.Apply(belt_prim)
+
+    # 2. Configure native PhysxSurfaceVelocityAPI
+    surface_api = PhysxSchema.PhysxSurfaceVelocityAPI.Apply(belt_prim)
+    surface_api.CreateSurfaceVelocityEnabledAttr().Set(True)
+    surface_api.CreateSurfaceVelocityAttr().Set(Gf.Vec3f(cfg.speed_mps, 0.0, 0.0))
+    logger.info(
+        "Configured conveyor belt surface velocity via PhysxSurfaceVelocityAPI with speed %s m/s.",
+        cfg.speed_mps,
+    )
+
+    # 3. If OmniGraph utility is requested, also invoke create_conveyor_belt
     if cfg.use_omnigraph_utility:
         try:
-            # Isaac Sim 6.2.0 conveyor utility function
             try:
                 from isaacsim.asset.gen.conveyor import create_conveyor_belt  # TODO(verify)
             except ImportError:
@@ -119,25 +131,11 @@ def setup_conveyor_belt(
             prim_name = belt_prim_path.split("/")[-1]
             create_conveyor_belt(stage, belt_prim, prim_name)  # TODO(verify)
             logger.info("Configured conveyor belt via create_conveyor_belt utility.")
-            applied_via_utility = True
         except Exception as err:
             logger.warning(
-                "Failed to configure conveyor via create_conveyor_belt utility: %s. Falling back to PhysxSurfaceVelocityAPI.",
+                "Failed to configure conveyor via create_conveyor_belt utility: %s. Using PhysxSurfaceVelocityAPI.",
                 err,
             )
-
-    # 2. Fallback or direct configuration using native PhysxSurfaceVelocityAPI
-    # This guarantees surface motion even if OmniGraph action graph fails or does not clone in multi-env
-    if not applied_via_utility:
-        surface_api = PhysxSchema.PhysxSurfaceVelocityAPI.Apply(belt_prim)
-        # Velocity in local space along +X axis
-        surface_api.CreateSurfaceVelocityAttr().Set(Gf.Vec3f(cfg.speed_mps, 0.0, 0.0))
-        surface_api.CreateSurfaceVelocityLocalSpaceAttr().Set(True)
-        surface_api.CreateSurfaceVelocityEnabledAttr().Set(True)
-        logger.info(
-            "Configured conveyor belt surface velocity directly via PhysxSurfaceVelocityAPI with speed %s m/s.",
-            cfg.speed_mps,
-        )
 
     return True
 
