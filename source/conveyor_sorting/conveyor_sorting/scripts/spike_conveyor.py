@@ -77,9 +77,14 @@ parser.add_argument("--num_steps", type=int, default=400, help="Number of simula
 parser.add_argument(
     "--mode",
     type=str,
-    choices=["omnigraph", "surface_api"],
-    default="omnigraph",
-    help="Conveyor implementation: 'omnigraph' (via utility) or 'surface_api' (direct PhysxSurfaceVelocityAPI).",
+    choices=["custom_drive", "surface_api", "omnigraph"],
+    default="custom_drive",
+    help=(
+        "Conveyor implementation mode: "
+        "'custom_drive' (Isaac Lab tensor state velocity drive, GPU/CPU compatible), "
+        "'surface_api' (PhysX PhysxSurfaceVelocityAPI), "
+        "or 'omnigraph' (Isaac Sim Conveyor Belt Utility)."
+    ),
 )
 add_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -115,8 +120,9 @@ def build_spike_scene(
     light_cfg = sim_utils.DomeLightCfg(intensity=2500.0, color=(0.85, 0.85, 0.85))
     light_cfg.func("/World/Light", light_cfg)
 
-    # Enable conveyor extension if available
-    enable_conveyor_extension()
+    # Only enable conveyor extension if omnigraph utility is requested
+    if conveyor_cfg.use_omnigraph_utility:
+        enable_conveyor_extension()
 
     half_depth = conveyor_cfg.belt_depth_m / 2.0
     belt_center_z = conveyor_cfg.surface_height_m - half_depth
@@ -224,6 +230,23 @@ def main():
         settle_steps = 60  # Initial 1 second transient window
 
         for step in range(args_cli.num_steps):
+            # If in custom_drive mode, drive linear velocity along +X for objects resting on the belt
+            if args_cli.mode == "custom_drive":
+                vel = cube.data.root_vel_w.torch.clone()
+                pos = cube.data.root_pos_w.torch
+                half_len = conveyor_cfg.length_m / 2.0
+                half_wid = conveyor_cfg.width_m / 2.0
+                on_belt = (
+                    (pos[:, 0] >= -half_len)
+                    & (pos[:, 0] <= half_len)
+                    & (pos[:, 1] >= -half_wid)
+                    & (pos[:, 1] <= half_wid)
+                    & (pos[:, 2] >= conveyor_cfg.surface_height_m - 0.05)
+                    & (pos[:, 2] <= conveyor_cfg.surface_height_m + 0.20)
+                )
+                vel[on_belt, 0] = target_speed
+                cube.write_root_velocity_to_sim_index(vel)
+
             # Step physics
             sim.step()
             cube.update(sim.get_physics_dt())
@@ -232,13 +255,17 @@ def main():
             # root_lin_vel_w has shape (num_envs, 3)
             lin_vel_w = cube.data.root_lin_vel_w.torch
             vx = lin_vel_w[:, 0]
+            pos_w = cube.data.root_pos_w.torch
 
             if step >= settle_steps:
                 recorded_vx_steady.append(vx.clone())
 
-            if (step + 1) % 100 == 0:
+            if (step + 1) % 50 == 0:
                 avg_step_vx = vx.mean().item()
-                print(f"  Step {step + 1:3d}/{args_cli.num_steps}: instantaneous avg vx = {avg_step_vx:.4f} m/s")
+                avg_step_x = pos_w[:, 0].mean().item()
+                print(
+                    f"  Step {step + 1:3d}/{args_cli.num_steps}: avg x = {avg_step_x:6.3f} m | instantaneous avg vx = {avg_step_vx:6.4f} m/s"
+                )
 
         # Aggregate results
         stacked_vx = torch.stack(recorded_vx_steady, dim=0)  # shape: (steps_steady, num_envs)
